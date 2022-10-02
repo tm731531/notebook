@@ -2,6 +2,9 @@
 title : solr 筆記
 tags : 學習
 ---
+
+[![hackmd-github-sync-badge](https://hackmd.io/oGjkVBP7TNe0_P19JwmGsg/badge)](https://hackmd.io/oGjkVBP7TNe0_P19JwmGsg)
+
 [toc]
 
 ## solr
