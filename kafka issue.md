@@ -1,5 +1,5 @@
 ---
-title : kafka 錯誤筆記
+title : kafka 實務坑筆記
 tags : 學習
 ---
 
@@ -8,6 +8,27 @@ tags : 學習
 ## 2022/02月的某一天
 ### 事起源由
 我們有一個需求是需要回滾資料，讓User可以拿到過去的訂單當作"鋪底"，討論的結果是，因為現在的做法就是按照5分鐘一次的往前打訂單，那我們是否只要一定的時段 一步一步的往前切就好。然後就這樣做了
+
+
+### 解決方法
+因2022/08/12 這一隻也發生了另一個狀況
+因此把解決方法也記錄在這
+
+當時的解決第一步，是針對回滾的時間間閣拉長，原本是每隔五分鐘的時間差把時間切斷丟進Queue裡面，讓程式做，這個時長改成半天，變成了步進半天半天的方式快速的把回滾區間產出Queue去做處理
+
+後來8/12上正式區跑回滾30天發生一個情況，客戶真實的訂單量非常的大，平台的API有分頁，因此回滾的時候異常耗時，甚至時常Timeout，一種是平台那邊拉的訂單量過大，另一個部分是我方正式區兩個Job機同時間收到大量的Queue要去問訂單，當時甚至有幾個平台開了三個Job機，導致Error更是嚴重，面臨不知道眾多的queue中那些是成功的，那些是失敗的，所幸大概回滾10天後，幾乎所有平台都把我們Ban掉了，所以不用擔心了。
+
+因此需要解決第二步，大量一次性的把所需要的訂單時段切開丟進Queue裡，造成的問題是崩潰的，這一部分後來改成一次步進一天，然後五分鐘後再步進第二天，雖然整體完成的時間會拉長，但是這樣放緩可以確保Queue正常不會被塞住，而且平台也不會被打到server error導致資料不一致。
+
+同樣回滾30天造成的狀況
+|  |原始  |2月後  |8月後|
+| -------- | -------- | -------- |---|
+|作法 |把三十天的時間切開<br>每隔五分鐘產一個queue|把三十天的時間切開<br>每隔半天產一個queue|把三十天的時間切開<br>每隔一天產一個queue<br>並且每隔五分鐘把這個queue打進kafka|
+|總Queue的量(工作量) |60/5 * 24 * 30=8640|30 * 2=60|30|
+|假設每一個工作產生100張訂單 |864000|6000|3000|
+|Queue的工作量工作所需的時間(打API假設2秒) |8640*2= 17280|60*2=120|30*5*60=9000|
+|此方案最嚴重的問題 |巨量的Queue根本做不完<br>且時常會暴力打到平台端Error|大量的Queue 可以做完<br>但是會短時間塞住<br>導致其他正常工作無法運作<br>|所需時間長|
+
 
 ### 當時狀況
 我們就按照時間每隔五分鐘(不是真的等五分鐘，而是時間無窮的切)就發散一個Queue給kafka了，也就是說一天有
@@ -25,25 +46,11 @@ tags : 學習
 訂單會龐大且集中在某些狀況下
 
 
-### 解決方法
-因2022/08/12 這一隻也發生了另一個狀況
-因此把解決方法也記錄在這
-
-當時的解決第一步，是針對回滾的時間間格拉長，原本是每隔五分鐘的時間差把時間切斷丟進Queue裡面，讓程式做，這個時長改成半天，變成了步進半天半天的方式快速的把回滾區間產出Queue去做處理
-
-後來8/12上正式區跑回滾30天發生一個情況，客戶真實的訂單量非常的大，平台的API有分頁，因此回滾的時候異常耗時，甚至時常Timeout，一種是平台那邊拉的訂單量過大，另一個部分是我方正式區兩個Job機同時間收到大量的Queue要去問訂單，當時甚至有幾個平台開了三個Job機，導致Error更是嚴重，面臨不知道眾多的queue中那些是成功的，那些是失敗的，所幸大概回滾10天後，幾乎所有平台都把我們Ban掉了，所以不用擔心了。
-
-因此需要解決第二步，大量一次性的把所需要的訂單時段切開丟進Queue裡，造成的問題是崩潰的，這一部分後來改成一次步進一天，然後五分鐘後再步進第二天，雖然整體完成的時間會拉長，但是這樣放緩可以確保Queue正常不會被塞住，而且平台也不會被打到server error導致資料不一致。
-
-同樣回滾30天造成的狀況
-|  |原始  |2月後  |8月後|
-| -------- | -------- | -------- |---|
-|作法 |把三十天的時間切開<br>每隔五分鐘產一個queue|把三十天的時間切開<br>每隔半天產一個queue|把三十天的時間切開<br>每隔一天產一個queue<br>並且每隔五分鐘把這個queue打進kafka|
-|總Queue的量(工作量) |60/5 * 24 * 30=8640|30 * 2=60|30|
-|假設每一個工作產生100張訂單 |864000|6000|3000|
-|Queue的工作量工作所需的時間(打API假設2秒) |8640*2= 17280|60*2=120|30*5*60=9000|
-|此方案最嚴重的問題 |巨量的Queue根本做不完<br>且時常會暴力打到平台端Error|大量的Queue 可以做完<br>但是會短時間塞住<br>導致其他正常工作無法運作<br>|所需時間長|
-
+### 總結問題
+剛開始做完的時候並不覺得有任何問題<br>
+但是後續出現兩次問題<br>
+一次是大量幾乎相同多餘的queue，造成job的資源浪費  
+一次是大量的queue幾乎在同一時間被多台消化造成server端的error
 
 ### 奇聞軼事
 當時對於kafka跟queue之間的關係，還有Job機之間不太會看lag造成的影響，
@@ -56,7 +63,14 @@ graph TD
     
   start("Time create") --起始時間跳五分鐘 --> handler("kafka topic:action ")
  
-  handler --> exit("Time create")
+  handler --> start("Time create")
+  
+  queue("kafka topic:action ")  --> worker("call api")
+  worker --> queue("kafka topic:action ")
+  worker --> nextQueue("kafka topic:order process ")
+  
+  
+  queue2("kafka topic:order process ") --> save("save order info")
 
 ```
 第一版的實測悲劇
@@ -70,13 +84,20 @@ graph TD
 
 
 
-Step1後改成
+後改成
 
 ``` mermaid
 graph TD
     
   start("Time create") --起始時間跳半天 --> handler("kafka topic:action ")
-  handler --> exit("Time create")
+  handler --> start("Time create")
+  
+  queue("kafka topic:action ")  --> worker("call api")
+  worker --> queue("kafka topic:action ")
+  worker --> nextQueue("kafka topic:order process ")
+  
+  
+  queue2("kafka topic:order process ") --> save("save order info")
 
 ```
 2022/08/12這版也發生了一個悲劇
@@ -91,7 +112,14 @@ graph TD
     
   start("Time create") --起始時間跳一天 --> handler("kafka topic:action ")
   
-  handler --睡五分鐘--> exit("Time create")
+  handler --睡五分鐘--> start("Time create")
+  
+  queue("kafka topic:action ")  --> worker("call api")
+  worker --> queue("kafka topic:action ")
+  worker --> nextQueue("kafka topic:order process ")
+  
+  
+  queue2("kafka topic:order process ") --> save("save order info")
 
 ```
 
@@ -203,10 +231,16 @@ org.apache.kafka.clients.consumer.CommitFailedException: Offset commit cannot be
 ![](https://i.imgur.com/ljYhTaC.png)
 
 
+
+### 此經驗的重點
+queue 要評估他做一個所需要的時間  
+來判斷一次取的最大量  
+如果無法評估 要把工作盡量拆到最小可評估單位
+
+
 ### 參考資料
 1. https://stackoverflow.com/questions/40162370/heartbeat-failed-for-group-because-its-rebalancing
 2. https://stackoverflow.com/questions/39730126/difference-between-session-timeout-ms-and-max-poll-interval-ms-for-kafka-0-10/39759329#39759329
-3. 
 
 
 ## 2022/09/29
